@@ -25,6 +25,12 @@ export interface FeedbackSubmission {
    */
   readonly userId?: string;
   readonly context: FeedbackContext;
+  /** A type alias, not an interface, so it is assignable to the `Json` metadata type. */
+  readonly targets?: Array<{
+    readonly url: string;
+    readonly quote: string;
+    readonly heading?: string;
+  }>;
 }
 
 /**
