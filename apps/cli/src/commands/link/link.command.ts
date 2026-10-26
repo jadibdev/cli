@@ -82,9 +82,10 @@ export const linkCommand = Command.make("link", config).pipe(
               "the [ref-or-branch] argument or --project-ref is a branch name or UUID, not a 20-letter project ref",
           },
           { operationId: "v1-get-project", kind: "required" },
+          { operationId: "v1-get-project-api-keys", kind: "required" },
           {
             operationId: "v1-get-project-api-keys",
-            kind: "required",
+            kind: "best-effort",
             request: { query: { reveal: "true" } },
           },
           {

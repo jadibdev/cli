@@ -25,7 +25,8 @@ export interface LinkServicesInput {
   readonly ref: string;
   /**
    * Tenant API key used for the service version probes: `link` passes the
-   * service-role key, `bootstrap` passes the anon key.
+   * service-role key (the anon key when it cannot reveal secrets), `bootstrap`
+   * passes the anon key.
    */
   readonly serviceKey: string;
   readonly skipPooler: boolean;

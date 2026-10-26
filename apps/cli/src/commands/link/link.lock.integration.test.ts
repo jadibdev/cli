@@ -147,7 +147,7 @@ interface World {
   readonly tenant: Tenant;
   readonly workdir: string;
   /** Switches the link target between the project and its feature branch, and sets the hosted database version. */
-  readonly target: { onBranch: boolean; database: string };
+  readonly target: { onBranch: boolean; database: string; revealRefused: boolean };
 }
 
 const startWorld = Effect.gen(function* () {
@@ -161,7 +161,7 @@ const startWorld = Effect.gen(function* () {
     host,
     tenant: hostedTenant(),
     workdir,
-    target: { onBranch: false, database: PROJECT.database.version },
+    target: { onBranch: false, database: PROJECT.database.version, revealRefused: false },
   } satisfies World;
 });
 
@@ -181,7 +181,10 @@ const layerFor = (
             }),
       getABranchConfig: () =>
         Effect.succeed({ postgres_version: "15.1.0.117", postgres_engine: "15" }),
-      getProjectApiKeys: () => Effect.succeed(SERVICE_KEYS),
+      getProjectApiKeys: ({ reveal }) =>
+        world.target.revealRefused && reveal === true
+          ? Effect.fail(statusCodeFailure(403))
+          : Effect.succeed(SERVICE_KEYS),
       getPoolerConfig: () => Effect.succeed(POOLER),
       listAllBranches: () => Effect.succeed(world.target.onBranch ? [FEATURE_BRANCH] : []),
     },
@@ -331,6 +334,23 @@ describe("link records hosted versions in the stack lock", () => {
       expect(warnings(out)).toEqual([
         expect.stringMatching(/^database: hosted Postgres 15\.1\.0\.117/),
       ]);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.live("records the hosted versions when the token cannot reveal secret keys", () =>
+    Effect.gen(function* () {
+      const world: World = yield* startWorld;
+      world.target.revealRefused = true;
+
+      yield* runLink(world);
+
+      const services = yield* readServices(world.workdir);
+      for (const kind of ["rest", "auth", "storage"] as const) {
+        expect(services[kind]).toMatchObject({
+          resolution: "resolved",
+          linked: { version: HOSTED },
+        });
+      }
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

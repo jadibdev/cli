@@ -9,7 +9,7 @@ import { tagForServiceVersion } from "../shared/services/services.shared.ts";
 /**
  * Best-effort probes for the deployed versions of a project's REST, Auth,
  * and Storage services, used by `supabase link`. Requests use the
- * service-role key: always `apikey: <serviceKey>`, plus `Authorization:
+ * supplied tenant key: always `apikey: <serviceKey>`, plus `Authorization:
  * Bearer <serviceKey>` unless the key is a new-style `sb_…` key. The legacy
  * fetchers resolve any transport error, non-200 status, parse failure, or
  * missing version to `Option.none()`; {@link probeTenantVersions} keeps

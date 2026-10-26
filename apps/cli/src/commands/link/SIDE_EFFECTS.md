@@ -83,6 +83,7 @@ Management API (base `CommandSettings.apiUrl`, `Authorization: Bearer <access-to
 | ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/v1/projects/{ref}`                        | always (404 tolerated for branch projects)                                                                                                                                 |
 | `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always                                                                                                                                                                     |
+| `GET`  | `/v1/projects/{ref}/api-keys`               | only when `reveal=true` answers 403 (a token without API Key Secrets read); the version probes then use the anon key                                                       |
 | `GET`  | `/v1/projects/{ref}/config/storage`         | best-effort                                                                                                                                                                |
 | `GET`  | `/v1/projects/{ref}/config/database/pooler` | best-effort (unless `--skip-pooler`)                                                                                                                                       |
 | `GET`  | `/v1/projects`                              | only when prompting on a TTY                                                                                                                                               |
@@ -198,7 +199,7 @@ stays busy fails the link with `LockResolutionError` reason `lease-busy` before 
 - Probes the target (the `link.probe` span; `stack update` runs the same probe under `update.probe`):
   the database version from `getProject` (`database.version`), or from `getABranchConfig`
   (`postgres_version`) when the ref is a branch the project lookup does not return, and the `rest`, `auth` and `storage` versions from the target's
-  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key.
+  tenant host (`/rest/v1/`, `/auth/v1/health`, `/storage/v1/version`) with the service-role key (`link` uses the anon key when `reveal=true` answers 403).
   The key is sent as `apikey`, and as a bearer token unless it is an `sb_` key; it is never logged
   or recorded, and a redirect is never followed (the probe counts it as failed). Services without a
   version endpoint are not probed.

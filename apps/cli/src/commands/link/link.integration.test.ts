@@ -17,6 +17,7 @@ import * as HttpClient from "effect/http/HttpClient";
 import type * as HttpClientError from "effect/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
+import * as UrlParams from "effect/http/UrlParams";
 
 import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
@@ -1534,6 +1535,8 @@ describe("link permissions", () => {
   function setupRecording(
     opts: {
       readonly selectResponses?: ReadonlyArray<string>;
+      /* A project-scoped token that is refused `reveal=true`, or every api-keys request. */
+      readonly refusedApiKeys?: "reveal" | "all";
     } = {},
   ) {
     const out = mockOutput({ format: "text", promptSelectResponses: opts.selectResponses });
@@ -1559,7 +1562,19 @@ describe("link permissions", () => {
               : jsonResponse(request, 200, { ...HEALTHY_PROJECT, id: ref, ref });
           }
           if (rest === "/branches") return jsonResponse(request, 200, [LINK_BRANCH]);
-          if (rest === "/api-keys") return jsonResponse(request, 200, SERVICE_KEYS);
+          if (rest === "/api-keys") {
+            const reveal = UrlParams.getFirst(request.urlParams, "reveal");
+            if (opts.refusedApiKeys === undefined) return jsonResponse(request, 200, SERVICE_KEYS);
+            return opts.refusedApiKeys === "all" || Option.isSome(reveal)
+              ? jsonResponse(request, 403, {
+                  message:
+                    "Your account does not have the necessary privileges to access this endpoint.",
+                })
+              : jsonResponse(request, 200, [
+                  { ...SERVICE_KEYS[0], api_key: "sb_secret_abcd••••" },
+                  SERVICE_KEYS[1],
+                ]);
+          }
           if (rest === "/config/storage") {
             return jsonResponse(request, 200, {
               migrationVersion: "2026-01-01-000000",
@@ -1610,6 +1625,53 @@ describe("link permissions", () => {
         requests: api.requests,
         exact: true,
       });
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "links with a token that cannot read secret keys, probing versions with the anon key",
+    () => {
+      const { layer, api, workdir } = setupRecording({ refusedApiKeys: "reveal" });
+      return Effect.gen(function* () {
+        yield* link(flags());
+
+        expect(
+          api.requests
+            .filter(({ url }) => url.startsWith(API))
+            .map(({ method, urlWithParams }) => `${method} ${urlWithParams.slice(API.length)}`),
+        ).toEqual([
+          `GET /v1/projects/${VALID_REF}`,
+          `GET /v1/projects/${VALID_REF}/api-keys?reveal=true`,
+          `GET /v1/projects/${VALID_REF}/api-keys`,
+          `GET /v1/projects/${VALID_REF}/config/storage`,
+          `GET /v1/projects/${VALID_REF}/config/database/pooler`,
+        ]);
+        const probe = api.requests.find(({ url }) => url.includes("/rest/v1/"));
+        expect(probe?.headers?.["apikey"]).toBe("anon-key");
+        expect(yield* readTemp(workdir, "project-ref")).toBe(VALID_REF);
+        assertPermissionDrift({
+          command: "link",
+          activeFlags: { "project-ref": true, "skip-pooler": false },
+          requests: api.requests,
+        });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("still fails when the token cannot list API keys at all", () => {
+    const { layer, api } = setupRecording({ refusedApiKeys: "all" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(link(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain("LinkAuthTokenError");
+      expect(
+        api.requests
+          .filter(({ urlWithParams }) => urlWithParams.includes("/api-keys"))
+          .map(({ urlWithParams }) => urlWithParams.slice(API.length)),
+      ).toEqual([
+        `/v1/projects/${VALID_REF}/api-keys?reveal=true`,
+        `/v1/projects/${VALID_REF}/api-keys`,
+      ]);
     }).pipe(Effect.provide(layer));
   });
 

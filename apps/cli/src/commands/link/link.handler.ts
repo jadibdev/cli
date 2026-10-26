@@ -431,16 +431,29 @@ export const link = Effect.fn("link")(function* (flags: LinkFlags) {
     }
 
     // 2. Resolve service keys (auth check).
-    const keys = yield* api.v1
-      .getProjectApiKeys({ ref, reveal: true })
-      .pipe(Effect.catch(mapApiKeysError));
-    const { anon, serviceRole } = extractServiceKeys(keys);
+    const { anon, serviceRole } = yield* api.v1.getProjectApiKeys({ ref, reveal: true }).pipe(
+      Effect.map(extractServiceKeys),
+      Effect.catch(mapApiKeysError),
+      /* A token without API Key Secrets read is refused `reveal=true` but can still list keys, so
+         link continues and the version probes use the anon key. */
+      Effect.catchTag("LinkAuthTokenError", (error) =>
+        error.status === 403
+          ? api.v1.getProjectApiKeys({ ref }).pipe(
+              Effect.map((keys) => {
+                const { anon } = extractServiceKeys(keys);
+                return { anon, serviceRole: anon };
+              }),
+              Effect.catch(mapApiKeysError),
+            )
+          : Effect.fail(error),
+      ),
+    );
     if (anon.length === 0 && serviceRole.length === 0) {
       return yield* new LinkMissingKeyError({ message: "Anon key not found." });
     }
 
-    // 3. Link services — best-effort, using the service-role key for tenant probes. Stack mode
-    // keeps only the pooler URL; versions come from the service lock.
+    // 3. Link services — best-effort, using the service-role key (anon after a reveal 403) for
+    // tenant probes. Stack mode keeps only the pooler URL; versions come from the service lock.
     const poolerUrl = stackState
       ? flags.skipPooler
         ? Option.none<string>()
