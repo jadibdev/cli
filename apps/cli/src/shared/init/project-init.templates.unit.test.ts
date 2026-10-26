@@ -61,9 +61,9 @@ const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entit
 # deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
 # auto_expose_new_tables = true`;
 
-const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
-# instead. Left unset, a fresh project falls back to \`true\`.
-# auto_expose_new_tables = true`;
+const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the cloud
+# default. Set to \`true\` to keep legacy auto-exposure.
+# auto_expose_new_tables = false`;
 
 const renderExpectedNativeEject = renderExpectedGoEject.pipe(
   Effect.map((eject) =>

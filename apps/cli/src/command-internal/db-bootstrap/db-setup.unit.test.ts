@@ -589,7 +589,7 @@ describe("startSetupLocalDatabase", () => {
     });
 
     it.effect(
-      "unset (no config.toml at all) matches the true behavior — no revoke SQL exec'd",
+      "unset (no config.toml at all) execs the revoke SQL matching cloud default",
       () => {
         return Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -599,7 +599,7 @@ describe("startSetupLocalDatabase", () => {
           const docker = mockDockerRun();
           yield* run(baseInput(workdir, session, { majorVersion: 14 }), out, docker);
           const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(false);
+          expect(execSql.some((sql) => sql.includes(REVOKE_PRIVILEGES_FINGERPRINT))).toBe(true);
           yield* fs.remove(workdir, { recursive: true, force: true });
         }).pipe(Effect.provide(BunServices.layer));
       },

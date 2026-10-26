@@ -21,9 +21,9 @@ extra_search_path = ["public", "extensions"]
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
 # \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
-# without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
-# instead. Left unset, a fresh project falls back to \`true\`.
-# auto_expose_new_tables = true
+# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the cloud
+# default. Set to \`true\` to keep legacy auto-exposure.
+# auto_expose_new_tables = false
 
 [api.tls]
 # Enable HTTPS endpoints locally using a self-signed certificate.

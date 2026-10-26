@@ -605,9 +605,9 @@ const startInitSchema = Effect.fn("DbSetup.initSchema")(function* (
 });
 
 /**
- * Applies the `api.auto_expose_new_tables` tri-state: unset and `true` are both a no-op (keeps
- * the bundled initial-schema grants); an explicit `false` execs
- * {@link START_REVOKE_API_PRIVILEGES_SQL}. Always execs over `session` directly, regardless of PG
+ * Applies the `api.auto_expose_new_tables` tri-state: unset and `false` both exec
+ * {@link START_REVOKE_API_PRIVILEGES_SQL}; an explicit `true` is a no-op (keeps the bundled initial-schema grants).
+ * Always execs over `session` directly, regardless of PG
  * major version — never part of the PG15+ one-shot Docker jobs.
  *
  * Takes `session`/`fs`/`path` directly rather than the whole {@link StartSetupLocalDatabaseInput}
@@ -620,7 +620,7 @@ export const applyApiPrivileges = Effect.fnUntraced(function* (
   tmpDir: string,
   autoExposeNewTables: Option.Option<boolean>,
 ) {
-  if (Option.getOrElse(autoExposeNewTables, () => true)) return;
+  if (Option.getOrElse(autoExposeNewTables, () => false)) return;
   yield* execSqlConstant(
     session,
     fs,
