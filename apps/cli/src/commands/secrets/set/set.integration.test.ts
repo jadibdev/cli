@@ -128,6 +128,15 @@ const writeConfig = (content: string) => writeSupabaseFile("config.toml", conten
 
 const writeSupabaseDotEnv = (content: string) => writeSupabaseFile(".env", content);
 
+const writeSubprojectFile = (subproject: string, name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(tempRoot.current, subproject, "supabase");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, name), content);
+  });
+
 const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const decodePostBody = Schema.decodeUnknownEffect(
@@ -367,13 +376,11 @@ SHARED = "config-shared"
   it.effect(
     "ignores CWD config.toml and respects workdir when explicitWorkdir is set (Issue #7354 regression)",
     () => {
+      const subprojectDir = `${tempRoot.current}/subproject`;
+      const { layer, api } = setup({
+        cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+      });
       return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const subprojectDir = path.join(tempRoot.current, "subproject");
-        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
-
         // CWD has local development secrets that must NOT leak to production
         yield* writeConfig(
           `[edge_runtime.secrets]
@@ -382,22 +389,19 @@ LOCAL_SECRET = "do_not_leak_to_prod"
         );
 
         // Subproject has a clean config with no secrets
-        yield* fs.writeFileString(
-          path.join(subprojectDir, "supabase", "config.toml"),
+        yield* writeSubprojectFile(
+          "subproject",
+          "config.toml",
           `[edge_runtime.secrets]
 `,
         );
-
-        const { layer, api } = setup({
-          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
-        });
 
         const exit = yield* Effect.exit(
           secretsSet({
             projectRef: Option.some(VALID_REF),
             envFile: Option.none(),
             secrets: [],
-          }).pipe(Effect.provide(layer)),
+          }),
         );
 
         // Fails with SecretsNoArgumentsError because subproject has no secrets and CWD is ignored
@@ -408,102 +412,92 @@ LOCAL_SECRET = "do_not_leak_to_prod"
           expect(causeText).toContain("No arguments found. Use --env-file to read from a .env file.");
         }
         expect(api.requests).toHaveLength(0);
-      });
+      }).pipe(Effect.provide(layer));
     },
   );
 
   it.effect(
     "loads secrets from workdir supabase/config.toml when explicitWorkdir is set",
     () => {
+      const subprojectDir = `${tempRoot.current}/subproject`;
+      const { layer, api } = setup({
+        cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+      });
       return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const subprojectDir = path.join(tempRoot.current, "subproject");
-        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
-
         // Subproject has secrets
-        yield* fs.writeFileString(
-          path.join(subprojectDir, "supabase", "config.toml"),
+        yield* writeSubprojectFile(
+          "subproject",
+          "config.toml",
           `[edge_runtime.secrets]
 TARGET_SECRET = "clean_production_value"
 `,
         );
 
-        const { layer, api } = setup({
-          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
-        });
-
         yield* secretsSet({
           projectRef: Option.some(VALID_REF),
           envFile: Option.none(),
           secrets: [],
-        }).pipe(Effect.provide(layer));
+        });
 
         expect(api.requests).toHaveLength(1);
         expect(api.requests[0]?.body).toEqual([
           { name: "TARGET_SECRET", value: "clean_production_value" },
         ]);
-      });
+      }).pipe(Effect.provide(layer));
     },
   );
 
   it.effect(
     "resolves env(VAR) secrets against workdir .env and ignores CWD parent .env when explicitWorkdir is set",
     () => {
+      const subprojectDir = `${tempRoot.current}/subproject`;
+      const { layer, api } = setup({
+        cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+      });
       return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const subprojectDir = path.join(tempRoot.current, "subproject");
-        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
-
         // CWD (parent) has wrong env
         yield* writeSupabaseDotEnv("API_KEY=parent_env_value\n");
 
         // Subproject has config and its own .env
-        yield* fs.writeFileString(
-          path.join(subprojectDir, "supabase", "config.toml"),
+        yield* writeSubprojectFile(
+          "subproject",
+          "config.toml",
           `[edge_runtime.secrets]
 SERVICE_KEY = "env(API_KEY)"
 `,
         );
-        yield* fs.writeFileString(
-          path.join(subprojectDir, "supabase", ".env"),
+        yield* writeSubprojectFile(
+          "subproject",
+          ".env",
           "API_KEY=subproject_env_value\n",
         );
-
-        const { layer, api } = setup({
-          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
-        });
 
         yield* secretsSet({
           projectRef: Option.some(VALID_REF),
           envFile: Option.none(),
           secrets: [],
-        }).pipe(Effect.provide(layer));
+        });
 
         expect(api.requests).toHaveLength(1);
         expect(api.requests[0]?.body).toEqual([
           { name: "SERVICE_KEY", value: "subproject_env_value" },
         ]);
-      });
+      }).pipe(Effect.provide(layer));
     },
   );
 
   it.effect(
     "resolves relative --env-file against CWD while honoring explicit workdir config",
     () => {
+      const subprojectDir = `${tempRoot.current}/subproject`;
+      const { layer, api } = setup({
+        cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+      });
       return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-
-        const subprojectDir = path.join(tempRoot.current, "subproject");
-        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
-
         // Subproject has config
-        yield* fs.writeFileString(
-          path.join(subprojectDir, "supabase", "config.toml"),
+        yield* writeSubprojectFile(
+          "subproject",
+          "config.toml",
           `[edge_runtime.secrets]
 FROM_WORKDIR = "workdir_val"
 `,
@@ -512,15 +506,11 @@ FROM_WORKDIR = "workdir_val"
         // CWD has the relative env file
         yield* writeTempFile("local.env", "FROM_CWD_ENV=cwd_val\n");
 
-        const { layer, api } = setup({
-          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
-        });
-
         yield* secretsSet({
           projectRef: Option.some(VALID_REF),
           envFile: Option.some("local.env"),
           secrets: [],
-        }).pipe(Effect.provide(layer));
+        });
 
         const body = yield* decodePostBody(api.requests[0]?.body);
         expect(body).toEqual(
@@ -529,7 +519,7 @@ FROM_WORKDIR = "workdir_val"
             { name: "FROM_CWD_ENV", value: "cwd_val" },
           ]),
         );
-      });
+      }).pipe(Effect.provide(layer));
     },
   );
 
