@@ -409,43 +409,42 @@ LOCAL_SECRET = "do_not_leak_to_prod"
         if (Exit.isFailure(exit)) {
           const causeText = Cause.pretty(exit.cause);
           expect(causeText).toContain("SecretsNoArgumentsError");
-          expect(causeText).toContain("No arguments found. Use --env-file to read from a .env file.");
+          expect(causeText).toContain(
+            "No arguments found. Use --env-file to read from a .env file.",
+          );
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
   );
 
-  it.effect(
-    "loads secrets from workdir supabase/config.toml when explicitWorkdir is set",
-    () => {
-      const subprojectDir = `${tempRoot.current}/subproject`;
-      const { layer, api } = setup({
-        cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
-      });
-      return Effect.gen(function* () {
-        // Subproject has secrets
-        yield* writeSubprojectFile(
-          "subproject",
-          "config.toml",
-          `[edge_runtime.secrets]
+  it.effect("loads secrets from workdir supabase/config.toml when explicitWorkdir is set", () => {
+    const subprojectDir = `${tempRoot.current}/subproject`;
+    const { layer, api } = setup({
+      cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+    });
+    return Effect.gen(function* () {
+      // Subproject has secrets
+      yield* writeSubprojectFile(
+        "subproject",
+        "config.toml",
+        `[edge_runtime.secrets]
 TARGET_SECRET = "clean_production_value"
 `,
-        );
+      );
 
-        yield* secretsSet({
-          projectRef: Option.some(VALID_REF),
-          envFile: Option.none(),
-          secrets: [],
-        });
+      yield* secretsSet({
+        projectRef: Option.some(VALID_REF),
+        envFile: Option.none(),
+        secrets: [],
+      });
 
-        expect(api.requests).toHaveLength(1);
-        expect(api.requests[0]?.body).toEqual([
-          { name: "TARGET_SECRET", value: "clean_production_value" },
-        ]);
-      }).pipe(Effect.provide(layer));
-    },
-  );
+      expect(api.requests).toHaveLength(1);
+      expect(api.requests[0]?.body).toEqual([
+        { name: "TARGET_SECRET", value: "clean_production_value" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
 
   it.effect(
     "resolves env(VAR) secrets against workdir .env and ignores CWD parent .env when explicitWorkdir is set",
@@ -466,11 +465,7 @@ TARGET_SECRET = "clean_production_value"
 SERVICE_KEY = "env(API_KEY)"
 `,
         );
-        yield* writeSubprojectFile(
-          "subproject",
-          ".env",
-          "API_KEY=subproject_env_value\n",
-        );
+        yield* writeSubprojectFile("subproject", ".env", "API_KEY=subproject_env_value\n");
 
         yield* secretsSet({
           projectRef: Option.some(VALID_REF),
