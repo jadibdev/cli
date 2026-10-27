@@ -10,12 +10,14 @@ import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Predicate, Redacted, Result, Schema } from "effect";
 
 import { CommandPlatformApi } from "../../../auth/command-platform-api.service.ts";
+import { CommandSettings } from "../../../config/command-settings.service.ts";
 import { RemoteTarget } from "../../../config/remote-target.service.ts";
 import { DebugLogger } from "../../../command-internal/debug-logger.service.ts";
 import { LinkedProjectCache } from "../../../telemetry/linked-project-cache.service.ts";
 import { TelemetryState } from "../../../telemetry/telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { shouldSearchAncestors } from "../../../command-internal/workdir-search.ts";
 import { mapHttpError } from "../../../command-internal/http-errors.ts";
 import { configParseCauseMessage } from "../../../shared/output/normalize-error.ts";
 import {
@@ -92,12 +94,14 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
   const linkedProjectCache = yield* LinkedProjectCache;
   const telemetryState = yield* TelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const commandSettings = yield* CommandSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
   const { ref } = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {
+    const search = shouldSearchAncestors(commandSettings);
     // Source 1: `[edge_runtime.secrets]` from `supabase/config.toml`. Only resolved values are
     // sent: `resolveCliConfigSubtree` wraps every resolved secret leaf in `Redacted<string>`,
     // while unresolved `env(VAR)` references stay plain strings, so `Redacted.isRedacted`
@@ -111,9 +115,10 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     // so a schema-decode error on a remote target recovers that remote's override, not the base
     // document. `goViperCompat: true` enables the duplicate-project_id/format checks needed for
     // the `DuplicateRemoteProjectIdError` catch below to ever fire.
-    const loadedConfig = yield* loadCliConfig(runtimeInfo.cwd, {
+    const loadedConfig = yield* loadCliConfig(commandSettings.workdir, {
       projectRef: ref,
       goViperCompat: true,
+      search,
     }).pipe(
       Effect.flatMap((loaded) => {
         if (loaded === null) {
@@ -169,8 +174,9 @@ export const secretsSet = Effect.fn("secrets.set")(function* (flags: SecretsSetF
     );
     if (loadedConfig !== null) {
       const projectEnv = yield* loadCliProjectEnvironment({
-        cwd: runtimeInfo.cwd,
+        cwd: commandSettings.workdir,
         baseEnv: process.env,
+        search,
       });
       if (projectEnv !== null) {
         const resolved = yield* resolveCliConfigSubtree(

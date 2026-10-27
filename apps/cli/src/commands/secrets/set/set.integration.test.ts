@@ -79,6 +79,8 @@ interface SetupOpts {
   status?: number;
   network?: "fail";
   env?: Record<string, string | undefined>;
+  cliSettings?: Parameters<typeof mockCommandSettings>[0];
+  cwd?: string;
 }
 
 const tempRoot = useTempWorkdir("supabase-secrets-set-int-");
@@ -90,7 +92,7 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: null },
     network: opts.network,
   });
-  const cliSettings = mockCommandSettings({ workdir: tempRoot.current });
+  const cliSettings = mockCommandSettings({ workdir: tempRoot.current, ...opts.cliSettings });
   const debugLogger = mockDebugLoggerTracked();
   const layer = Layer.mergeAll(
     buildTestRuntime({
@@ -99,7 +101,7 @@ function setup(opts: SetupOpts = {}) {
       cliSettings,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
-    mockRuntimeInfo({ cwd: tempRoot.current }),
+    mockRuntimeInfo({ cwd: opts.cwd ?? tempRoot.current }),
     processEnvLayer(opts.env ?? {}),
     debugLogger.layer,
   );
@@ -359,6 +361,175 @@ SHARED = "config-shared"
           ]),
         );
       }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "ignores CWD config.toml and respects workdir when explicitWorkdir is set (Issue #7354 regression)",
+    () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const subprojectDir = path.join(tempRoot.current, "subproject");
+        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
+
+        // CWD has local development secrets that must NOT leak to production
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+LOCAL_SECRET = "do_not_leak_to_prod"
+`,
+        );
+
+        // Subproject has a clean config with no secrets
+        yield* fs.writeFileString(
+          path.join(subprojectDir, "supabase", "config.toml"),
+          `[edge_runtime.secrets]
+`,
+        );
+
+        const { layer, api } = setup({
+          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+        });
+
+        const exit = yield* Effect.exit(
+          secretsSet({
+            projectRef: Option.some(VALID_REF),
+            envFile: Option.none(),
+            secrets: [],
+          }).pipe(Effect.provide(layer)),
+        );
+
+        // Fails with SecretsNoArgumentsError because subproject has no secrets and CWD is ignored
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const causeText = Cause.pretty(exit.cause);
+          expect(causeText).toContain("SecretsNoArgumentsError");
+          expect(causeText).toContain("No arguments found. Use --env-file to read from a .env file.");
+        }
+        expect(api.requests).toHaveLength(0);
+      });
+    },
+  );
+
+  it.effect(
+    "loads secrets from workdir supabase/config.toml when explicitWorkdir is set",
+    () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const subprojectDir = path.join(tempRoot.current, "subproject");
+        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
+
+        // Subproject has secrets
+        yield* fs.writeFileString(
+          path.join(subprojectDir, "supabase", "config.toml"),
+          `[edge_runtime.secrets]
+TARGET_SECRET = "clean_production_value"
+`,
+        );
+
+        const { layer, api } = setup({
+          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+        });
+
+        yield* secretsSet({
+          projectRef: Option.some(VALID_REF),
+          envFile: Option.none(),
+          secrets: [],
+        }).pipe(Effect.provide(layer));
+
+        expect(api.requests).toHaveLength(1);
+        expect(api.requests[0]?.body).toEqual([
+          { name: "TARGET_SECRET", value: "clean_production_value" },
+        ]);
+      });
+    },
+  );
+
+  it.effect(
+    "resolves env(VAR) secrets against workdir .env and ignores CWD parent .env when explicitWorkdir is set",
+    () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const subprojectDir = path.join(tempRoot.current, "subproject");
+        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
+
+        // CWD (parent) has wrong env
+        yield* writeSupabaseDotEnv("API_KEY=parent_env_value\n");
+
+        // Subproject has config and its own .env
+        yield* fs.writeFileString(
+          path.join(subprojectDir, "supabase", "config.toml"),
+          `[edge_runtime.secrets]
+SERVICE_KEY = "env(API_KEY)"
+`,
+        );
+        yield* fs.writeFileString(
+          path.join(subprojectDir, "supabase", ".env"),
+          "API_KEY=subproject_env_value\n",
+        );
+
+        const { layer, api } = setup({
+          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+        });
+
+        yield* secretsSet({
+          projectRef: Option.some(VALID_REF),
+          envFile: Option.none(),
+          secrets: [],
+        }).pipe(Effect.provide(layer));
+
+        expect(api.requests).toHaveLength(1);
+        expect(api.requests[0]?.body).toEqual([
+          { name: "SERVICE_KEY", value: "subproject_env_value" },
+        ]);
+      });
+    },
+  );
+
+  it.effect(
+    "resolves relative --env-file against CWD while honoring explicit workdir config",
+    () => {
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+
+        const subprojectDir = path.join(tempRoot.current, "subproject");
+        yield* fs.makeDirectory(path.join(subprojectDir, "supabase"), { recursive: true });
+
+        // Subproject has config
+        yield* fs.writeFileString(
+          path.join(subprojectDir, "supabase", "config.toml"),
+          `[edge_runtime.secrets]
+FROM_WORKDIR = "workdir_val"
+`,
+        );
+
+        // CWD has the relative env file
+        yield* writeTempFile("local.env", "FROM_CWD_ENV=cwd_val\n");
+
+        const { layer, api } = setup({
+          cliSettings: { workdir: subprojectDir, explicitWorkdir: true },
+        });
+
+        yield* secretsSet({
+          projectRef: Option.some(VALID_REF),
+          envFile: Option.some("local.env"),
+          secrets: [],
+        }).pipe(Effect.provide(layer));
+
+        const body = yield* decodePostBody(api.requests[0]?.body);
+        expect(body).toEqual(
+          expect.arrayContaining([
+            { name: "FROM_WORKDIR", value: "workdir_val" },
+            { name: "FROM_CWD_ENV", value: "cwd_val" },
+          ]),
+        );
+      });
     },
   );
 
